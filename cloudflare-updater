@@ -1,0 +1,159 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use GuzzleHttp\Client;
+use GuzzleHttp\RequestOptions;
+
+require('vendor/autoload.php');
+
+const IPV4 = 'https://ipv4.icanhazip.com';
+const IPV6 = 'https://ipv6.icanhazip.com';
+
+$arguments = getopt('', ['zone:', 'key:', 'help']);
+
+$zone = $arguments['zone'] ?? null;
+$key = $arguments['key'] ?? null;
+
+if (isset($arguments['help']) || !$zone || !$key) {
+    echo 'Usage: cloudflare-updater [options]' . PHP_EOL;
+    echo '   --zone <zone> Cloudflare Zone ID' . PHP_EOL;
+    echo '   --key  <key>  Cloudflare Bearer Token' . PHP_EOL;
+    echo '   --help        This help' . PHP_EOL . PHP_EOL;
+
+    exit(0);
+}
+
+try {
+    $time = time();
+    $changes = 0;
+
+    $ipv4 = trim(file_get_contents(IPV4));
+    $ipv6 = trim(file_get_contents(IPV6));
+
+    $client = (new Client([
+        'base_uri' => 'https://api.cloudflare.com/client/v4/zones/',
+        'headers' => [
+            'Authorization' => sprintf('Bearer %s', $key),
+            'Accept' => 'application/json',
+        ]
+    ]));
+
+    $zone = json_decode((string)$client->get($zone)->getBody())->result ?? null;
+
+    if (!$zone) {
+        printf(
+            '%s - Zone %s not found' . PHP_EOL,
+            $time,
+            $zone
+        );
+
+        exit(1);
+    }
+
+    printf('Using Zone: %s' . PHP_EOL, $zone->name);
+
+    $dnsRecords = sprintf('%s/dns_records', $zone->id);
+
+    $records = json_decode((string)$client->get($dnsRecords)->getBody())->result ?? [];
+
+    $ipv4Result = array_values(array_filter($records, fn($record): bool => $record->type === 'A'))[0] ?? null;
+    $ipv6Result = array_values(array_filter($records, fn($record): bool => $record->type === 'AAAA'))[0] ?? null;
+
+    if ($ipv4 && (!$ipv4Result || $ipv4Result->content !== $ipv4)) {
+        $changes++;
+
+        if (!$ipv4Result) {
+            printf(
+                '%s - Creating A record for %s as %s' . PHP_EOL,
+                $time,
+                $zone->name,
+                $ipv4
+            );
+
+            $response = $client->post(
+                $dnsRecords,
+                [
+                    RequestOptions::JSON => [
+                        'content' => $ipv4,
+                        'name' => $zone->name,
+                        'type' => 'A',
+                    ]
+                ]
+            );
+        } else {
+            printf(
+                '%s - Updating A record for %s from %s to %s' . PHP_EOL,
+                $time,
+                $zone->name,
+                $ipv4Result->content,
+                $ipv4
+            );
+
+            $response = $client->put(
+                $dnsRecords . '/' . $ipv4Result->id,
+                [
+                    RequestOptions::JSON => [
+                        'content' => $ipv4,
+                        'name' => $zone->name,
+                        'type' => 'A',
+                    ]
+                ]
+            );
+        }
+    }
+
+    if ($ipv6 && (!$ipv6Result || $ipv6Result->content != $ipv6)) {
+        $changes++;
+
+        if (!$ipv6Result) {
+            printf(
+                '%s - Creating AAAA record for %s as %s' . PHP_EOL,
+                $time,
+                $zone->name,
+                $ipv6
+            );
+
+            $response = $client->post(
+                $dnsRecords,
+                [
+                    RequestOptions::JSON => [
+                        'content' => $ipv6,
+                        'name' => $zone->name,
+                        'type' => 'AAAA',
+                    ]
+                ]
+            );
+        } else {
+            printf(
+                '%s - Updating AAAA record for %s from %s to %s' . PHP_EOL,
+                $time,
+                $zone->name,
+                $ipv6Result->content,
+                $ipv6
+            );
+
+            $response = $client->put(
+                $dnsRecords . '/' . $ipv6Result->id,
+                [
+                    RequestOptions::JSON => [
+                        'content' => $ipv6,
+                        'name' => $zone->name,
+                        'type' => 'AAAA',
+                    ]
+                ]
+            );
+        }
+    }
+
+    if ($changes > 0) {
+        printf('%d changes made' . PHP_EOL, $changes);
+    } else {
+        echo 'No changes made.' . PHP_EOL;
+    }
+} catch (Throwable $e) {
+    echo $e;
+
+    exit(1);
+}

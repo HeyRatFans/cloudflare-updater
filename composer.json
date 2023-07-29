@@ -1,0 +1,14 @@
+{
+    "name": "heyratfans/cloudflare-updater",
+    "type": "project",
+    "authors": [
+        {
+            "name": "HeyRatFans",
+            "email": "matt@heyratfans.co.uk"
+        }
+    ],
+    "require": {
+        "php": "^8.2.0",
+        "guzzlehttp/guzzle": "^7.0.0"
+    }
+}
